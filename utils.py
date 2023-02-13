@@ -33,3 +33,12 @@ def get_trello_username_by_chat_id(file_path, chat_id):
             if int(row.get("chat_id")) == chat_id
         ]
         return users[0] if users else None
+
+
+def get_member_tasks_message(card_data, member_id):
+    msg = ""
+    for data in card_data:
+        if member_id in data.get("idMembers"):
+            msg += f"{data.get('idShort')} - {data.get('name')}"
+
+    return msg
