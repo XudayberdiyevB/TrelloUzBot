@@ -39,6 +39,6 @@ def get_member_tasks_message(card_data, member_id):
     msg = ""
     for data in card_data:
         if member_id in data.get("idMembers"):
-            msg += f"{data.get('idShort')} - {data.get('name')}"
+            msg += f"{data.get('idShort')} - <a href=\"{data.get('url')}\">{data.get('name')}</a>\n"
 
     return msg
