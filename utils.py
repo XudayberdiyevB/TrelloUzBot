@@ -35,10 +35,9 @@ def get_trello_username_by_chat_id(file_path, chat_id):
         return users[0] if users else None
 
 
-def get_member_tasks_message(card_data, member_id):
+def get_user_tasks_message(cards):
     msg = ""
-    for data in card_data:
-        if member_id in data.get("idMembers"):
-            msg += f"{data.get('idShort')} - <a href=\"{data.get('url')}\">{data.get('name')}</a>\n"
+    for index, card in enumerate(cards):
+        msg += f"{index + 1}. <a href=\"{card.get('url')}\">{card.get('card_name')}</a>\n"
 
     return msg
