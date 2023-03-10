@@ -1,12 +1,15 @@
 import telebot
 from environs import Env
+from psycopg2.extras import RealDictCursor
 from telebot import custom_filters
 
 import messages
+from db import queries, connection
 from keyboards import get_inline_boards_btn, get_inline_lists_btn, get_members_btn, get_lists_btn
 from states import CreateNewTask
+from sync import sync_boards
 from trello import TrelloManager
-from utils import write_chat_to_csv, check_chat_id_from_csv, get_trello_username_by_chat_id, get_member_tasks_message
+from utils import check_chat_id_from_csv, get_trello_username_by_chat_id, get_member_tasks_message
 
 env = Env()
 env.read_env()
@@ -30,32 +33,57 @@ def welcome(message):
 
 @bot.message_handler(commands=["register"])
 def register_handler(message):
-    if not check_chat_id_from_csv("chats.csv", message.chat.id):
-        bot.send_message(message.chat.id, messages.SEND_TRELLO_USERNAME)
-        bot.register_next_step_handler(message, get_trello_username)
-    else:
-        bot.send_message(message.chat.id, messages.ALREADY_REGISTERED)
+    chat_id = message.chat.id
+    with connection.cursor(cursor_factory=RealDictCursor) as cur:
+        cur.execute(queries.GET_USER_BY_CHAT_ID, (chat_id,))
+        user = cur.fetchone()
+        if not user:
+            chat = message.from_user
+            cur.execute(queries.REGISTER_USER, (chat_id, chat.first_name, chat.last_name, chat.username))
+            connection.commit()
+            bot.send_message(message.chat.id, messages.SEND_TRELLO_USERNAME)
+            bot.register_next_step_handler(message, get_trello_username)
+        else:
+            bot.send_message(message.chat.id, messages.ALREADY_REGISTERED)
 
 
 # Trello username
 def get_trello_username(message):
-    write_chat_to_csv("chats.csv", message)
+    with connection.cursor() as cur:
+        trello_username = message.text
+        trello_id = TrelloManager(trello_username).get_member_id()
+        cur.execute(
+            queries.UPDATE_USER_TRELLO_BY_CHAT_ID, (trello_username, trello_id, message.chat.id)
+        )
+        connection.commit()
     bot.send_message(message.chat.id, messages.ADD_SUCCESSFULLY)
+
+
+@bot.message_handler(commands=["sync"])
+def sync_trello_handler(message):
+    bot.send_message(message.chat.id, messages.SYNC_STARTED)
+    # Sync Trello
+    with connection.cursor(cursor_factory=RealDictCursor) as cur:
+        cur.execute(queries.GET_USER_BY_CHAT_ID, (message.chat.id,))
+        user = cur.fetchone()
+        trello_username = user.get("trello_username")
+        sync_boards(trello_username)
+    bot.send_message(message.chat.id, messages.SYNC_ENDED)
 
 
 @bot.message_handler(commands=["boards"])
 def get_boards(message):
-    if not check_chat_id_from_csv("chats.csv", message.chat.id):
+    with connection.cursor(cursor_factory=RealDictCursor) as cur:
+        cur.execute(queries.GET_USER_BY_CHAT_ID, (message.chat.id,))
+        user = cur.fetchone()
+        trello_username = user.get("id")
+    if not trello_username:
         bot.send_message(message.chat.id, messages.TRELLO_USERNAME_NOT_FOUND)
     else:
-        trello_username = get_trello_username_by_chat_id("chats.csv", message.chat.id)
-        if trello_username:
-            bot.send_message(
-                message.chat.id, messages.SELECT_BOARD,
-                reply_markup=get_inline_boards_btn(trello_username, "show_tasks")
-            )
-        else:
-            bot.send_message(message.chat.id, messages.TRELLO_USERNAME_NOT_FOUND)
+        bot.send_message(
+            message.chat.id, messages.SELECT_BOARD,
+            reply_markup=get_inline_boards_btn(trello_username, "show_tasks")
+        )
 
 
 @bot.callback_query_handler(lambda c: c.data.startswith("show_tasks"))
@@ -168,6 +196,7 @@ my_commands = [
     telebot.types.BotCommand("/register", "Ro'yxatdan o'tish"),
     telebot.types.BotCommand("/new", "Yangi task yaratish"),
     telebot.types.BotCommand("/boards", "Doskalarni ko'rish"),
+    telebot.types.BotCommand("/sync", "Trello sinxronizatsiya"),
     telebot.types.BotCommand("/cancel", "Bekor qilish"),
     telebot.types.BotCommand("/help", "Yordam")
 ]
